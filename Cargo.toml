@@ -1,0 +1,11 @@
+[package]
+name = "ws2"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.71"
+crossbeam = { version = "0.8.2", features = ["crossbeam-channel"] }
+log2 = "0.1.7"
+url = "2.4.0"
+ws = { version = "0.9.2", features = ["ssl"] }
