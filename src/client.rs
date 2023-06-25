@@ -19,6 +19,15 @@ pub struct Connection {
 type EventReceiver = std::sync::mpsc::Receiver<Event>;
 type EventSender = std::sync::mpsc::Sender<Event>;
 
+pub enum Event {
+    Open(Sender),
+    Close,
+    Text(String),
+    Binary(Vec<u8>),
+    Timeout,
+    Error(Error),
+}
+
 impl Connection {
     /// timeout with decimal seconds
     pub fn recv(&mut self, timeout: f32) -> Event {
@@ -173,13 +182,4 @@ impl Handler for Client {
     fn on_error(&mut self, err: Error) {
         let _ = self.tx.send(Event::Error(err));
     }
-}
-
-pub enum Event {
-    Open(Sender),
-    Close,
-    Text(String),
-    Binary(Vec<u8>),
-    Timeout,
-    Error(Error),
 }
