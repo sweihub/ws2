@@ -1,9 +1,8 @@
-use crossbeam::channel::unbounded as channel;
-use crossbeam::channel::RecvTimeoutError;
 use log2::*;
-use std::thread;
+use std::sync::mpsc::channel;
 use std::thread::JoinHandle;
 use std::time::Duration;
+use std::{sync::mpsc::RecvTimeoutError, thread};
 use ws::{CloseCode, Error, ErrorKind, Handler, Handshake, Message, Result, Sender};
 
 pub const INFINITE: f32 = std::f32::MAX;
@@ -11,43 +10,58 @@ pub const INFINITE: f32 = std::f32::MAX;
 pub struct Connection {
     thread: Option<JoinHandle<()>>,
     radio: Option<Sender>,
+    ws: Option<Sender>,
     rx: Option<EventReceiver>,
-    xr: std::sync::mpsc::Receiver<(Option<Sender>, Option<EventReceiver>)>,
+    input: std::sync::mpsc::Receiver<(Sender, EventReceiver)>,
+    run: std::sync::mpsc::Sender<bool>,
 }
 
-type EventReceiver = crossbeam::channel::Receiver<Event>;
-type EventSender = crossbeam::channel::Sender<Event>;
+type EventReceiver = std::sync::mpsc::Receiver<Event>;
+type EventSender = std::sync::mpsc::Sender<Event>;
 
 impl Connection {
     /// timeout with decimal seconds
     pub fn recv(&mut self, timeout: f32) -> Event {
-        let n = if timeout == INFINITE {
-            Duration::from_nanos(std::u64::MAX)
-        } else {
-            Duration::from_nanos((timeout * 1e9) as u64)
-        };
-
-        if let Ok((radio, rx)) = self.xr.try_recv() {
-            self.radio = radio;
-            self.rx = rx;
+        let mut n = Duration::from_nanos(std::u64::MAX);
+        if timeout != INFINITE {
+            n = Duration::from_nanos((timeout * 1e9) as u64)
         }
 
-        // wait for connection
         if self.rx.is_none() {
+            if let Ok((radio, rx)) = self.input.recv_timeout(n) {
+                self.radio = Some(radio);
+                self.rx = Some(rx);
+            }
+        } else if let Ok((radio, rx)) = self.input.try_recv() {
+            self.radio = Some(radio);
+            self.rx = Some(rx);
+        }
+
+        if let Some(rx) = &self.rx {
+            return match rx.recv_timeout(n) {
+                Ok(event) => self.find_websocket(event),
+                Err(e) => match e {
+                    RecvTimeoutError::Timeout => Event::Timeout,
+                    RecvTimeoutError::Disconnected => {
+                        self.radio = None;
+                        self.rx = None;
+                        self.ws = None;
+                        return Event::Error(Error::new(ErrorKind::Internal, "disconnected"));
+                    }
+                },
+            };
+        } else {
+            // wait for connection
             std::thread::sleep(n);
             return Event::Error(Error::new(ErrorKind::Internal, "not connected"));
         }
+    }
 
-        let rx = self.rx.as_ref().unwrap();
-        return match rx.recv_timeout(n) {
-            Ok(event) => event,
-            Err(e) => match e {
-                RecvTimeoutError::Timeout => Event::Timeout,
-                RecvTimeoutError::Disconnected => {
-                    Event::Error(Error::new(ErrorKind::Internal, e.to_string()))
-                }
-            },
-        };
+    fn find_websocket(&mut self, event: Event) -> Event {
+        if let Event::Open(ws) = &event {
+            self.ws = Some(ws.clone());
+        }
+        event
     }
 
     #[inline]
@@ -55,8 +69,8 @@ impl Connection {
     where
         M: Into<Message>,
     {
-        if let Some(radio) = &self.radio {
-            return radio.send(msg);
+        if let Some(ws) = &self.ws {
+            return ws.send(msg);
         }
         Err(Error::new(ErrorKind::Internal, "not connected"))
     }
@@ -70,43 +84,60 @@ impl Connection {
 
 impl Drop for Connection {
     fn drop(&mut self) {
-        //self.radio.shutdown().ok();
+        if let Some(ws) = &self.ws {
+            ws.close(CloseCode::Normal).ok();
+        }
+        if let Some(radio) = &self.radio {
+            radio.shutdown().ok();
+        }
+        self.run.send(false).ok();
         let thread = self.thread.take();
         thread.unwrap().join().ok();
     }
 }
 
 pub fn connect(url: &str) -> anyhow::Result<Connection> {
-    let (xs, xr) = std::sync::mpsc::channel();
+    // mover
+    let (ms, mr) = channel();
+    // flag
+    let (fs, fr) = channel();
 
-    let url = url.to_string();
-    let thread = thread::spawn(move || loop {
-        let (tx, rx) = channel();
+    let url = url::Url::parse(url)?;
 
-        let mut socket = ws::Builder::new()
-            .build(move |sender| Client {
-                ws: sender,
-                tx: tx.clone(),
-            })
-            .unwrap();
+    let thread = thread::spawn(move || {
+        let mut run = true;
+        while run {
+            let (tx, rx) = channel();
+            let mut socket = ws::Builder::new()
+                .build(move |sender| Client {
+                    ws: sender,
+                    tx: tx.clone(),
+                })
+                .unwrap();
 
-        let radio = socket.broadcaster();
-        let _ = xs.send((Some(radio), Some(rx)));
+            // send to parent thread
+            let radio = socket.broadcaster();
+            let _ = ms.send((radio, rx));
 
-        let to = url.parse().unwrap();
-        debug!("connect {to}");
-        let _ = socket.connect(to);
-        let _ = socket.run();
+            debug!("connect {url}");
+            let to = url.clone();
+            let _ = socket.connect(to);
+            let _ = socket.run();
 
-        debug!("connect exit");
-        std::thread::sleep(Duration::from_secs(3));
+            debug!("connect exit");
+            if let Ok(x) = fr.recv_timeout(Duration::from_secs(3)) {
+                run = x;
+            }
+        }
     });
 
     let c = Connection {
         thread: Some(thread),
         radio: None,
         rx: None,
-        xr,
+        input: mr,
+        run: fs,
+        ws: None,
     };
 
     Ok(c)
