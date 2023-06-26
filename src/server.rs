@@ -106,8 +106,10 @@ struct WebSocket {
 
 impl Handler for WebSocket {
     fn on_open(&mut self, remote: Handshake) -> Result<()> {
-        let address = remote.remote_addr().unwrap_or(None);
-        let address = address.unwrap_or("".into());
+        let mut address = "0.0.0.0".to_string();
+        if let Some(s) = &remote.peer_addr {
+            address = s.to_string();
+        }
         let _ = self.tx.send(Event::Open(self.id, self.ws.clone(), address));
         Ok(())
     }

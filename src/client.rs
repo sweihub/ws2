@@ -7,7 +7,7 @@ use ws::{CloseCode, Error, ErrorKind, Handler, Handshake, Message, Result, Sende
 
 pub const INFINITE: f32 = std::f32::MAX;
 
-pub struct Connection {
+pub struct Client {
     thread: Option<JoinHandle<()>>,
     radio: Option<Sender>,
     ws: Option<Sender>,
@@ -28,7 +28,7 @@ pub enum Event {
     Error(Error),
 }
 
-impl Connection {
+impl Client {
     /// timeout with decimal seconds
     pub fn recv(&mut self, timeout: f32) -> Event {
         let mut n = Duration::from_nanos(std::u64::MAX);
@@ -91,7 +91,7 @@ impl Connection {
     }
 }
 
-impl Drop for Connection {
+impl Drop for Client {
     fn drop(&mut self) {
         if let Some(ws) = &self.ws {
             ws.close(CloseCode::Normal).ok();
@@ -105,7 +105,7 @@ impl Drop for Connection {
     }
 }
 
-pub fn connect(url: &str) -> anyhow::Result<Connection> {
+pub fn connect(url: &str) -> anyhow::Result<Client> {
     // mover
     let (ms, mr) = channel();
     // flag
@@ -118,7 +118,7 @@ pub fn connect(url: &str) -> anyhow::Result<Connection> {
         while run {
             let (tx, rx) = channel();
             let mut socket = ws::Builder::new()
-                .build(move |sender| Client {
+                .build(move |sender| WebSocket {
                     ws: sender,
                     tx: tx.clone(),
                 })
@@ -140,7 +140,7 @@ pub fn connect(url: &str) -> anyhow::Result<Connection> {
         }
     });
 
-    let c = Connection {
+    let c = Client {
         thread: Some(thread),
         radio: None,
         rx: None,
@@ -152,12 +152,12 @@ pub fn connect(url: &str) -> anyhow::Result<Connection> {
     Ok(c)
 }
 
-struct Client {
+struct WebSocket {
     ws: Sender,
     tx: EventSender,
 }
 
-impl Handler for Client {
+impl Handler for WebSocket {
     fn on_open(&mut self, _: Handshake) -> Result<()> {
         let _ = self.tx.send(Event::Open(self.ws.clone()));
         Ok(())
