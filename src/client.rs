@@ -4,9 +4,7 @@ use std::time::Duration;
 use std::{sync::mpsc::RecvTimeoutError, thread};
 use ws::{CloseCode, Error, ErrorKind, Handler, Handshake, Message, Result, Sender};
 
-use crate::{Pod, WebSocket};
-
-pub const INFINITE: f32 = std::f32::MAX;
+use crate::{Pod, WebSocket, INFINITE};
 
 pub struct Client {
     thread: Option<JoinHandle<()>>,
@@ -51,7 +49,7 @@ impl Client {
 
         if let Some(rx) = &self.rx {
             return match rx.recv_timeout(n) {
-                Ok(event) => self.find_websocket(event),
+                Ok(event) => event,
                 Err(e) => match e {
                     RecvTimeoutError::Timeout => Event::Timeout,
                     RecvTimeoutError::Disconnected => {
@@ -69,30 +67,14 @@ impl Client {
         }
     }
 
-    fn find_websocket(&mut self, event: Event) -> Event {
-        if let Event::Open(ws) = &event {
-            self.sender = Some(ws.clone());
-        }
-        event
-    }
-
-    #[inline]
-    pub fn send<M>(&self, msg: M) -> Result<()>
-    where
-        M: Into<Message>,
-    {
-        if let Some(ws) = &self.sender {
-            return ws.send(msg);
-        }
-        Err(Error::new(ErrorKind::Internal, "not connected"))
-    }
-
-    pub fn close(&self) {
+    /// Shutdown the socket
+    pub fn shutdown(&self) {
         if let Some(radio) = &self.radio {
             radio.shutdown().ok();
         }
     }
 
+    /// Process one event with decimal seconds timeout, or [INFINITE]
     pub fn process<F: crate::Handler>(&mut self, handler: &F, timeout: f32) -> Pod {
         match self.recv(timeout) {
             Event::Open(sender) => {
@@ -126,15 +108,13 @@ impl Client {
 
 impl Drop for Client {
     fn drop(&mut self) {
-        if let Some(ws) = &self.sender {
-            ws.close(CloseCode::Normal).ok();
-        }
         if let Some(radio) = &self.radio {
             radio.shutdown().ok();
         }
         self.run.send(false).ok();
-        let thread = self.thread.take();
-        thread.unwrap().join().ok();
+        if let Some(thread) = self.thread.take() {
+            thread.join().ok();
+        }
     }
 }
 

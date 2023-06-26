@@ -1,7 +1,7 @@
-pub use crate::client::INFINITE;
 use crate::Handler;
 use crate::Pod;
 use crate::WebSocket;
+pub use crate::INFINITE;
 use log2::debug;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU32;
@@ -45,6 +45,7 @@ impl Server {
         }
     }
 
+    /// Process one event with decimal seconds timeout, or [INFINITE]
     pub fn process<F: Handler>(&mut self, handler: &F, timeout: f32) -> Pod {
         match self.recv(timeout) {
             Event::Open(id, sender, address) => {
