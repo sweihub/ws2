@@ -54,7 +54,7 @@ fn main() -> anyhow::Result<()> {
 
 ## Client Example
 
-The client was designed as out-of-the-box, it will auto reconnect very 3s.
+The websocket client was designed as out-of-the-box, it will auto reconnect very 3s.
 
 ```rust
 use log2::*;
