@@ -1,4 +1,3 @@
-use log2::*;
 use std::sync::mpsc::channel;
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -164,12 +163,10 @@ pub fn connect(url: &str) -> anyhow::Result<Client> {
             let radio = socket.broadcaster();
             let _ = ms.send((radio, rx));
 
-            //debug!("connect {url}");
             let to = url.clone();
             let _ = socket.connect(to);
             let _ = socket.run();
 
-            //debug!("connect exit");
             if let Ok(x) = fr.recv_timeout(Duration::from_secs(3)) {
                 run = x;
             }
