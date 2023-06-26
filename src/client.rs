@@ -5,15 +5,19 @@ use std::time::Duration;
 use std::{sync::mpsc::RecvTimeoutError, thread};
 use ws::{CloseCode, Error, ErrorKind, Handler, Handshake, Message, Result, Sender};
 
+use crate::{Pod, WebSocket};
+
 pub const INFINITE: f32 = std::f32::MAX;
 
 pub struct Client {
     thread: Option<JoinHandle<()>>,
     radio: Option<Sender>,
-    ws: Option<Sender>,
+    sender: Option<Sender>,
     rx: Option<EventReceiver>,
     input: std::sync::mpsc::Receiver<(Sender, EventReceiver)>,
     run: std::sync::mpsc::Sender<bool>,
+    address: String,
+    ws: Option<WebSocket>,
 }
 
 type EventReceiver = std::sync::mpsc::Receiver<Event>;
@@ -29,7 +33,7 @@ pub enum Event {
 }
 
 impl Client {
-    /// timeout with decimal seconds
+    /// Receive the events, timeout is decimal seconds
     pub fn recv(&mut self, timeout: f32) -> Event {
         let mut n = Duration::from_nanos(std::u64::MAX);
         if timeout != INFINITE {
@@ -54,7 +58,7 @@ impl Client {
                     RecvTimeoutError::Disconnected => {
                         self.radio = None;
                         self.rx = None;
-                        self.ws = None;
+                        self.sender = None;
                         return Event::Error(Error::new(ErrorKind::Internal, "disconnected"));
                     }
                 },
@@ -68,7 +72,7 @@ impl Client {
 
     fn find_websocket(&mut self, event: Event) -> Event {
         if let Event::Open(ws) = &event {
-            self.ws = Some(ws.clone());
+            self.sender = Some(ws.clone());
         }
         event
     }
@@ -78,7 +82,7 @@ impl Client {
     where
         M: Into<Message>,
     {
-        if let Some(ws) = &self.ws {
+        if let Some(ws) = &self.sender {
             return ws.send(msg);
         }
         Err(Error::new(ErrorKind::Internal, "not connected"))
@@ -89,11 +93,41 @@ impl Client {
             radio.shutdown().ok();
         }
     }
+
+    pub fn process<F: crate::Handler>(&mut self, handler: &F, timeout: f32) -> Pod {
+        match self.recv(timeout) {
+            Event::Open(sender) => {
+                let ws = WebSocket {
+                    id: 0,
+                    sender,
+                    address: self.address.clone(),
+                };
+                self.ws = Some(ws);
+                handler.on_open(self.ws.as_mut().unwrap())?;
+            }
+            Event::Close => {
+                handler.on_close(self.ws.as_mut().unwrap())?;
+            }
+            Event::Text(msg) => {
+                handler.on_message(self.ws.as_mut().unwrap(), msg)?;
+            }
+            Event::Binary(buf) => {
+                handler.on_binary(self.ws.as_mut().unwrap(), buf)?;
+            }
+            Event::Timeout => {
+                handler.on_timeout()?;
+            }
+            Event::Error(error) => {
+                handler.on_error(error)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Drop for Client {
     fn drop(&mut self) {
-        if let Some(ws) = &self.ws {
+        if let Some(ws) = &self.sender {
             ws.close(CloseCode::Normal).ok();
         }
         if let Some(radio) = &self.radio {
@@ -105,20 +139,22 @@ impl Drop for Client {
     }
 }
 
+/// Connect to WebSocket, such as `ws://1.2.3.4:5678/`
 pub fn connect(url: &str) -> anyhow::Result<Client> {
     // mover
     let (ms, mr) = channel();
     // flag
     let (fs, fr) = channel();
 
-    let url = url::Url::parse(url)?;
+    let address = url.to_string();
+    let url = url::Url::parse(&address)?;
 
     let thread = thread::spawn(move || {
         let mut run = true;
         while run {
             let (tx, rx) = channel();
             let mut socket = ws::Builder::new()
-                .build(move |sender| WebSocket {
+                .build(move |sender| WebSocketHandler {
                     ws: sender,
                     tx: tx.clone(),
                 })
@@ -128,12 +164,12 @@ pub fn connect(url: &str) -> anyhow::Result<Client> {
             let radio = socket.broadcaster();
             let _ = ms.send((radio, rx));
 
-            debug!("connect {url}");
+            //debug!("connect {url}");
             let to = url.clone();
             let _ = socket.connect(to);
             let _ = socket.run();
 
-            debug!("connect exit");
+            //debug!("connect exit");
             if let Ok(x) = fr.recv_timeout(Duration::from_secs(3)) {
                 run = x;
             }
@@ -146,18 +182,20 @@ pub fn connect(url: &str) -> anyhow::Result<Client> {
         rx: None,
         input: mr,
         run: fs,
+        sender: None,
         ws: None,
+        address,
     };
 
     Ok(c)
 }
 
-struct WebSocket {
+struct WebSocketHandler {
     ws: Sender,
     tx: EventSender,
 }
 
-impl Handler for WebSocket {
+impl Handler for WebSocketHandler {
     fn on_open(&mut self, _: Handshake) -> Result<()> {
         let _ = self.tx.send(Event::Open(self.ws.clone()));
         Ok(())

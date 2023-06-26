@@ -1,5 +1,9 @@
 pub use crate::client::INFINITE;
+use crate::Handler;
+use crate::Pod;
+use crate::WebSocket;
 use log2::debug;
+use std::collections::HashMap;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::mpsc::channel;
@@ -7,9 +11,7 @@ use std::sync::mpsc::RecvTimeoutError::{Disconnected, Timeout};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
-use ws::{CloseCode, Error, ErrorKind, Handler, Handshake, Message, Result, Sender};
-
-type Pod = anyhow::Result<(), anyhow::Error>;
+use ws::{CloseCode, Error, ErrorKind, Handshake, Message, Result, Sender};
 
 pub enum Event {
     Open(u32, Sender, String),
@@ -24,9 +26,11 @@ pub struct Server {
     rx: std::sync::mpsc::Receiver<Event>,
     radio: Sender,
     thread: Option<JoinHandle<Pod>>,
+    map: HashMap<u32, WebSocket>,
 }
 
 impl Server {
+    /// Receive the events, timeout is decimal seconds
     pub fn recv(&self, timeout: f32) -> Event {
         let mut n = Duration::from_nanos(std::u64::MAX);
         if timeout != INFINITE {
@@ -40,6 +44,44 @@ impl Server {
             },
         }
     }
+
+    pub fn process<F: Handler>(&mut self, handler: &F, timeout: f32) -> Pod {
+        match self.recv(timeout) {
+            Event::Open(id, sender, address) => {
+                let ws = WebSocket {
+                    id,
+                    sender,
+                    address,
+                };
+                self.map.insert(id, ws);
+                let ws = &self.map[&id];
+                handler.on_open(ws)?;
+            }
+            Event::Close(id) => {
+                let ws = &self.map[&id];
+                handler.on_close(ws)?;
+            }
+            Event::Text(id, s) => {
+                let ws = &self.map[&id];
+                handler.on_message(ws, s)?;
+            }
+            Event::Binary(id, buf) => {
+                let ws = &self.map[&id];
+                handler.on_binary(ws, buf)?;
+            }
+            Event::Timeout => {
+                handler.on_timeout()?;
+            }
+            Event::Error(error) => {
+                handler.on_error(error)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn shutdown(&self) {
+        self.radio.shutdown().ok();
+    }
 }
 
 impl Drop for Server {
@@ -51,7 +93,7 @@ impl Drop for Server {
     }
 }
 
-/// "127.0.0.1:3012"
+/// Listen on endpoint, such as "127.0.0.1:3012"
 pub fn listen(address: &str) -> anyhow::Result<Server, anyhow::Error> {
     let (tx, rx) = channel();
     let id = Arc::new(AtomicU32::new(0));
@@ -60,7 +102,7 @@ pub fn listen(address: &str) -> anyhow::Result<Server, anyhow::Error> {
     let socket = ws::Builder::new()
         .build(move |out: ws::Sender| {
             let next = n.fetch_add(1, Relaxed);
-            WebSocket {
+            WebSocketHandler {
                 id: next,
                 ws: out,
                 tx: tx.clone(),
@@ -89,22 +131,23 @@ pub fn listen(address: &str) -> anyhow::Result<Server, anyhow::Error> {
         t = Some(thread);
     }
 
-    let s = Server {
+    let server = Server {
         rx,
         radio,
         thread: t,
+        map: HashMap::new(),
     };
 
-    Ok(s)
+    Ok(server)
 }
 
-struct WebSocket {
+struct WebSocketHandler {
     id: u32,
     ws: Sender,
     tx: std::sync::mpsc::Sender<Event>,
 }
 
-impl Handler for WebSocket {
+impl ws::Handler for WebSocketHandler {
     fn on_open(&mut self, remote: Handshake) -> Result<()> {
         let mut address = "0.0.0.0".to_string();
         if let Some(s) = &remote.peer_addr {
