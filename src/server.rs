@@ -1,8 +1,7 @@
 use crate::Handler;
 use crate::Pod;
 use crate::WebSocket;
-pub use crate::INFINITE;
-use log2::debug;
+use crate::INFINITE;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering::Relaxed;
@@ -114,9 +113,7 @@ pub fn listen(address: &str) -> anyhow::Result<Server, anyhow::Error> {
     let address = address.to_string();
     let radio = socket.broadcaster();
     let thread = thread::spawn(move || {
-        debug!("listen on: {address}");
         socket.listen(address)?;
-        debug!("listen exit");
         Pod::Ok(())
     });
 

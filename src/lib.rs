@@ -32,14 +32,18 @@
 //!
 //!fn main() -> Pod {
 //!    let _log2 = log2::start();
-//!    let mut server = ws2::server::listen("127.0.0.1:3125")?;
+//!    let address = "127.0.0.1:3125";
 //!    let worker = Worker {};
+//!
+//!    info!("listen on: {address}");
+//!    let mut server = ws2::listen(address)?;
 //!
 //!    loop {
 //!        let _ = server.process(&worker, 0.5);
 //!        // do other stuff
 //!    }
 //!}
+//!
 //!```
 //!
 //!## Client Example
@@ -73,7 +77,7 @@
 //!fn main() -> Pod {
 //!    let _log2 = log2::start();
 //!    let url = "wss://stream.binance.com:9443/ws/btcusdt@miniTicker";
-//!    let mut client = ws2::client::connect(url)?;
+//!    let mut client = ws2::connect(url)?;
 //!    let workder = Worker {};
 //!
 //!    loop {
@@ -95,7 +99,12 @@ pub type Pod = anyhow::Result<(), anyhow::Error>;
 /// Wait infinitely
 pub const INFINITE: f32 = std::f32::MAX;
 
+pub use client::connect;
+
+pub use server::listen;
+
 #[derive(Clone)]
+/// WebSocket sender
 pub struct WebSocket {
     address: String,
     id: u32,
@@ -104,6 +113,7 @@ pub struct WebSocket {
 
 impl WebSocket {
     #[inline]
+    /// send string or binary
     pub fn send<M>(&self, msg: M) -> Result<()>
     where
         M: Into<Message>,
@@ -111,14 +121,17 @@ impl WebSocket {
         self.sender.send(msg)
     }
 
+    /// peer address
     pub fn address(&self) -> &str {
         &self.address
     }
 
+    /// unique websocket id
     pub fn id(&self) -> u32 {
         self.id
     }
 
+    /// close the websocket
     pub fn close(&self) -> Pod {
         let n = self.sender.close(ws::CloseCode::Normal);
         Ok(n?)

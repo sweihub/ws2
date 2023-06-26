@@ -31,14 +31,18 @@ impl ws2::Handler for Worker {
 
 fn main() -> Pod {
     let _log2 = log2::start();
-    let mut server = ws2::server::listen("127.0.0.1:3125")?;
+    let address = "127.0.0.1:3125";
     let worker = Worker {};
+
+    info!("listen on: {address}");
+    let mut server = ws2::listen(address)?;
 
     loop {
         let _ = server.process(&worker, 0.5);
         // do other stuff
     }
 }
+
 ```
 
 ## Client Example
@@ -72,7 +76,7 @@ impl ws2::Handler for Worker {
 fn main() -> Pod {
     let _log2 = log2::start();
     let url = "wss://stream.binance.com:9443/ws/btcusdt@miniTicker";
-    let mut client = ws2::client::connect(url)?;
+    let mut client = ws2::connect(url)?;
     let workder = Worker {};
 
     loop {

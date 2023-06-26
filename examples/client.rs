@@ -24,7 +24,7 @@ impl ws2::Handler for Worker {
 fn main() -> Pod {
     let _log2 = log2::start();
     let url = "wss://stream.binance.com:9443/ws/btcusdt@miniTicker";
-    let mut client = ws2::client::connect(url)?;
+    let mut client = ws2::connect(url)?;
     let workder = Worker {};
 
     loop {

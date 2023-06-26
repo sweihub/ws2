@@ -24,8 +24,11 @@ impl ws2::Handler for Worker {
 
 fn main() -> Pod {
     let _log2 = log2::start();
-    let mut server = ws2::server::listen("127.0.0.1:3125")?;
+    let address = "127.0.0.1:3125";
     let worker = Worker {};
+
+    info!("listen on: {address}");
+    let mut server = ws2::listen(address)?;
 
     loop {
         let _ = server.process(&worker, 0.5);
