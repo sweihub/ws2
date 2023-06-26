@@ -127,10 +127,10 @@ fn main() -> Pod {
     let _log2 = log2::start();
     let url = "wss://stream.binance.com:9443/ws/btcusdt@miniTicker";
     let mut ws = ws2::client::connect(url)?;
-    let handler = Worker {};
+    let worker = Worker {};
 
     loop {
-        let _ = ws.process(&handler, 0.5);
+        let _ = ws.process(&worker, 0.5);
     }
 }
 
