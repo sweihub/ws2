@@ -1,7 +1,7 @@
 //!
 //!# Very Simple Websocket For Rust
 //!
-//!`ws2` is an very easy to use WebSocket server & client for Rust, build on `ws` crate. it was designed for production, the receive timeout provides a non-blocking way.
+//!`ws2` is a very easy to use WebSocket server & client for Rust, builds on `ws` crate. it was designed for production, the receive timeout provides a non-blocking way.
 //!
 //!## Server Example
 //!
@@ -55,7 +55,7 @@
 //!
 //!## Client Example
 //!
-//!The websocket client was designed as out-of-the-box, it will auto reconnect very 3s.
+//!The websocket client was designed as out-of-the-box, it will auto reconnect every 3s.
 //!
 //!```rust
 //!use log2::*;
