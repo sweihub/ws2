@@ -44,36 +44,40 @@ impl Server {
         }
     }
 
-    /// Process one event with decimal seconds timeout, or [INFINITE]
+    /// Process events with decimal seconds timeout, or [INFINITE]
     pub fn process<F: Handler>(&mut self, handler: &F, timeout: f32) -> Pod {
-        match self.recv(timeout) {
-            Event::Open(id, sender, address) => {
-                let ws = WebSocket {
-                    id,
-                    sender,
-                    address,
-                };
-                self.map.insert(id, ws);
-                let ws = &self.map[&id];
-                handler.on_open(ws)?;
-            }
-            Event::Close(id) => {
-                let ws = &self.map[&id];
-                handler.on_close(ws)?;
-            }
-            Event::Text(id, s) => {
-                let ws = &self.map[&id];
-                handler.on_message(ws, s)?;
-            }
-            Event::Binary(id, buf) => {
-                let ws = &self.map[&id];
-                handler.on_binary(ws, buf)?;
-            }
-            Event::Timeout => {
-                handler.on_timeout()?;
-            }
-            Event::Error(error) => {
-                handler.on_error(error)?;
+        loop {
+            match self.recv(timeout) {
+                Event::Open(id, sender, address) => {
+                    let ws = WebSocket {
+                        id,
+                        sender,
+                        address,
+                    };
+                    self.map.insert(id, ws);
+                    let ws = &self.map[&id];
+                    handler.on_open(ws)?;
+                }
+                Event::Close(id) => {
+                    let ws = &self.map[&id];
+                    handler.on_close(ws)?;
+                }
+                Event::Text(id, s) => {
+                    let ws = &self.map[&id];
+                    handler.on_message(ws, s)?;
+                }
+                Event::Binary(id, buf) => {
+                    let ws = &self.map[&id];
+                    handler.on_binary(ws, buf)?;
+                }
+                Event::Timeout => {
+                    handler.on_timeout()?;
+                    break;
+                }
+                Event::Error(error) => {
+                    handler.on_error(error)?;
+                    break;
+                }
             }
         }
         Ok(())

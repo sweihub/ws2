@@ -74,32 +74,36 @@ impl Client {
         }
     }
 
-    /// Process one event with decimal seconds timeout, or [INFINITE]
+    /// Process events with decimal seconds timeout, or [INFINITE]
     pub fn process<F: crate::Handler>(&mut self, handler: &F, timeout: f32) -> Pod {
-        match self.recv(timeout) {
-            Event::Open(sender) => {
-                let ws = WebSocket {
-                    id: 0,
-                    sender,
-                    address: self.address.clone(),
-                };
-                self.ws = Some(ws);
-                handler.on_open(self.ws.as_mut().unwrap())?;
-            }
-            Event::Close => {
-                handler.on_close(self.ws.as_mut().unwrap())?;
-            }
-            Event::Text(msg) => {
-                handler.on_message(self.ws.as_mut().unwrap(), msg)?;
-            }
-            Event::Binary(buf) => {
-                handler.on_binary(self.ws.as_mut().unwrap(), buf)?;
-            }
-            Event::Timeout => {
-                handler.on_timeout()?;
-            }
-            Event::Error(error) => {
-                handler.on_error(error)?;
+        loop {
+            match self.recv(timeout) {
+                Event::Open(sender) => {
+                    let ws = WebSocket {
+                        id: 0,
+                        sender,
+                        address: self.address.clone(),
+                    };
+                    self.ws = Some(ws);
+                    handler.on_open(self.ws.as_mut().unwrap())?;
+                }
+                Event::Close => {
+                    handler.on_close(self.ws.as_mut().unwrap())?;
+                }
+                Event::Text(msg) => {
+                    handler.on_message(self.ws.as_mut().unwrap(), msg)?;
+                }
+                Event::Binary(buf) => {
+                    handler.on_binary(self.ws.as_mut().unwrap(), buf)?;
+                }
+                Event::Timeout => {
+                    handler.on_timeout()?;
+                    break;
+                }
+                Event::Error(error) => {
+                    handler.on_error(error)?;
+                    break;
+                }
             }
         }
         Ok(())
