@@ -45,7 +45,7 @@ impl Server {
     }
 
     /// Process events with decimal seconds timeout, or [INFINITE]
-    pub fn process<F: Handler>(&mut self, handler: &F, timeout: f32) -> Pod {
+    pub fn process<F: Handler>(&mut self, handler: &mut F, timeout: f32) -> Pod {
         loop {
             match self.recv(timeout) {
                 Event::Open(id, sender, address) => {
