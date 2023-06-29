@@ -100,8 +100,9 @@ pub type Pod = anyhow::Result<(), anyhow::Error>;
 pub const INFINITE: f32 = std::f32::MAX;
 
 pub use client::connect;
-
+pub use client::Client;
 pub use server::listen;
+pub use server::Server;
 
 #[derive(Clone)]
 /// WebSocket sender
