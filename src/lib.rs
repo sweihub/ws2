@@ -91,7 +91,7 @@ pub mod client;
 pub mod server;
 
 use std::fmt::Display;
-use ws::{Error, Message, Result, Sender};
+use ws::{Error, Message, Result};
 
 /// Flexible result
 pub type Pod = anyhow::Result<(), anyhow::Error>;
@@ -103,6 +103,7 @@ pub use client::connect;
 pub use client::Client;
 pub use server::listen;
 pub use server::Server;
+pub use ws::Sender;
 
 #[derive(Clone)]
 /// WebSocket sender
