@@ -1,24 +1,24 @@
+use crate::{Pod, WebSocket};
+use poll_channel::*;
 use std::sync::mpsc::channel;
+use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
-use std::{sync::mpsc::RecvTimeoutError, thread};
 use ws::{CloseCode, Error, ErrorKind, Handler, Handshake, Message, Result, Sender};
-
-use crate::{Pod, WebSocket, INFINITE};
 
 pub struct Client {
     thread: Option<JoinHandle<()>>,
     radio: Option<Sender>,
     sender: Option<Sender>,
-    rx: Option<EventReceiver>,
-    input: std::sync::mpsc::Receiver<(Sender, EventReceiver)>,
+    rx: EventReceiver,
+    connector: std::sync::mpsc::Receiver<Sender>,
     run: std::sync::mpsc::Sender<bool>,
     address: String,
     ws: Option<WebSocket>,
 }
 
-type EventReceiver = std::sync::mpsc::Receiver<Event>;
-type EventSender = std::sync::mpsc::Sender<Event>;
+type EventReceiver = poll_channel::Receiver<Event>;
+type EventSender = poll_channel::Sender<Event>;
 
 pub enum Event {
     Open(Sender),
@@ -32,39 +32,24 @@ pub enum Event {
 impl Client {
     /// Receive the events, timeout is decimal seconds
     pub fn recv(&mut self, timeout: f32) -> Event {
-        let mut n = Duration::from_nanos(std::u64::MAX);
-        if timeout != INFINITE {
-            n = Duration::from_nanos((timeout * 1e9) as u64)
-        }
+        let n = Duration::from_nanos((timeout as f64 * 1e9) as u64);
 
-        if self.rx.is_none() {
-            if let Ok((radio, rx)) = self.input.recv_timeout(n) {
-                self.radio = Some(radio);
-                self.rx = Some(rx);
-            }
-        } else if let Ok((radio, rx)) = self.input.try_recv() {
+        // reconnect?
+        if let Ok(radio) = self.connector.try_recv() {
             self.radio = Some(radio);
-            self.rx = Some(rx);
         }
 
-        if let Some(rx) = &self.rx {
-            return match rx.recv_timeout(n) {
-                Ok(event) => event,
-                Err(e) => match e {
-                    RecvTimeoutError::Timeout => Event::Timeout,
-                    RecvTimeoutError::Disconnected => {
-                        self.radio = None;
-                        self.rx = None;
-                        self.sender = None;
-                        return Event::Error(Error::new(ErrorKind::Internal, "disconnected"));
-                    }
-                },
-            };
-        } else {
-            // wait for connection
-            std::thread::sleep(n);
-            return Event::Error(Error::new(ErrorKind::Internal, "not connected"));
-        }
+        return match self.rx.recv_timeout(n) {
+            Ok(event) => event,
+            Err(e) => match e {
+                RecvTimeoutError::Timeout => Event::Timeout,
+                RecvTimeoutError::Disconnected => {
+                    self.radio = None;
+                    self.sender = None;
+                    return Event::Error(Error::new(ErrorKind::Internal, "disconnected"));
+                }
+            },
+        };
     }
 
     /// Shutdown the socket
@@ -124,18 +109,17 @@ impl Drop for Client {
 
 /// Connect to WebSocket, such as `ws://1.2.3.4:5678/`
 pub fn connect(url: &str) -> anyhow::Result<Client> {
-    // mover
-    let (ms, mr) = channel();
-    // flag
-    let (fs, fr) = channel();
-
+    let (tx, rx) = poll_channel::channel();
+    let (mover, connector) = channel();
+    let (notify, detect) = channel();
     let address = url.to_string();
     let url = url::Url::parse(&address)?;
 
     let thread = thread::spawn(move || {
-        let mut run = true;
-        while run {
-            let (tx, rx) = channel();
+        loop {
+            let tx = tx.clone();
+            let to = url.clone();
+
             let mut socket = ws::Builder::new()
                 .build(move |sender| WebSocketHandler {
                     ws: sender,
@@ -145,14 +129,15 @@ pub fn connect(url: &str) -> anyhow::Result<Client> {
 
             // send to parent thread
             let radio = socket.broadcaster();
-            let _ = ms.send((radio, rx));
+            let _ = mover.send(radio);
 
-            let to = url.clone();
+            // run
             let _ = socket.connect(to);
             let _ = socket.run();
 
-            if let Ok(x) = fr.recv_timeout(Duration::from_secs(3)) {
-                run = x;
+            // sleep and detect exit
+            if let Ok(_) = detect.recv_timeout(Duration::from_secs(3)) {
+                break;
             }
         }
     });
@@ -160,9 +145,9 @@ pub fn connect(url: &str) -> anyhow::Result<Client> {
     let c = Client {
         thread: Some(thread),
         radio: None,
-        rx: None,
-        input: mr,
-        run: fs,
+        rx,
+        connector,
+        run: notify,
         sender: None,
         ws: None,
         address,
@@ -200,5 +185,15 @@ impl Handler for WebSocketHandler {
 
     fn on_error(&mut self, err: Error) {
         let _ = self.tx.send(Event::Error(err));
+    }
+}
+
+impl Pollable for Client {
+    fn signal(&self) -> ArcMutex2<OptionSignal> {
+        self.rx.signal().clone()
+    }
+
+    fn id(&self) -> i32 {
+        self.rx.id()
     }
 }

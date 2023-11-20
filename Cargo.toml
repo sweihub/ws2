@@ -1,6 +1,6 @@
 [package]
 name = "ws2"
-version = "0.1.9"
+version = "0.2.0"
 edition = "2021"
 description = "ws2 is an out-of-the-box websocket library for Rust."
 license = "MIT"
@@ -10,5 +10,6 @@ documentation = "https://docs.rs/ws2"
 [dependencies]
 anyhow = "1.0.71"
 log2 = "0.1.7"
+poll-channel = "0.1"
 url = "2.4.0"
 ws = { version = "0.9.2", features = ["ssl"] }
