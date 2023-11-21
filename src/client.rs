@@ -39,17 +39,33 @@ impl Client {
             self.radio = Some(radio);
         }
 
-        return match self.rx.recv_timeout(n) {
-            Ok(event) => event,
-            Err(e) => match e {
-                RecvTimeoutError::Timeout => Event::Timeout,
+        match self.rx.recv_timeout(n) {
+            Ok(event) => {
+                if let Event::Open(sender) = &event {
+                    self.sender = Some(sender.clone());
+                }
+                return event;
+            }
+            Err(error) => match error {
+                RecvTimeoutError::Timeout => return Event::Timeout,
                 RecvTimeoutError::Disconnected => {
                     self.radio = None;
                     self.sender = None;
-                    return Event::Error(Error::new(ErrorKind::Internal, "disconnected"));
+                    return Event::Error(Error::new(ErrorKind::Internal, error.to_string()));
                 }
             },
         };
+    }
+
+    pub fn send<M>(&self, msg: M) -> Pod
+    where
+        M: Into<ws::Message>,
+    {
+        if let Some(sender) = &self.sender {
+            sender.send(msg)?;
+        }
+
+        Err(anyhow::anyhow!("websocket not connected"))
     }
 
     /// Shutdown the socket
@@ -111,7 +127,7 @@ impl Drop for Client {
 pub fn connect(url: &str) -> anyhow::Result<Client> {
     let (tx, rx) = poll_channel::channel();
     let (mover, connector) = channel();
-    let (notify, detect) = channel();
+    let (notify, exit) = channel();
     let address = url.to_string();
     let url = url::Url::parse(&address)?;
 
@@ -136,13 +152,13 @@ pub fn connect(url: &str) -> anyhow::Result<Client> {
             let _ = socket.run();
 
             // sleep and detect exit
-            if let Ok(_) = detect.recv_timeout(Duration::from_secs(3)) {
+            if let Ok(_) = exit.recv_timeout(Duration::from_secs(3)) {
                 break;
             }
         }
     });
 
-    let c = Client {
+    let client = Client {
         thread: Some(thread),
         radio: None,
         rx,
@@ -153,7 +169,7 @@ pub fn connect(url: &str) -> anyhow::Result<Client> {
         address,
     };
 
-    Ok(c)
+    Ok(client)
 }
 
 struct WebSocketHandler {
