@@ -555,9 +555,9 @@ checksum = "26072860ba924cbfa98ea39c8c19b4dd6a4a25423dbdf219c1eca91aa0cf6964"
 
 [[package]]
 name = "poll-channel"
-version = "0.1.5"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e06e2f2fc8e7623b4cf2dba6bd1d01d54405e7884c1cbb77ee6ea075e47a87f0"
+checksum = "a5e6b7f564a1172fc424d1ce4781a38609d856ca4a89638cccf00625908303f1"
 dependencies = [
  "crossbeam",
 ]
