@@ -1,5 +1,4 @@
 use crate::{Pod, WebSocket};
-use log2::info;
 use poll_channel::*;
 use std::sync::mpsc::channel;
 use std::thread;
@@ -108,6 +107,7 @@ impl Client {
         loop {
             match self.recv(timeout) {
                 Event::Open(sender) => {
+                    self.sender = Some(sender.clone());
                     let ws = WebSocket {
                         id: 0,
                         sender,
