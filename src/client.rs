@@ -1,4 +1,5 @@
 use crate::{Pod, WebSocket};
+use log2::info;
 use poll_channel::*;
 use std::sync::mpsc::channel;
 use std::thread;
@@ -47,8 +48,14 @@ impl Client {
         }
     }
 
-    pub fn is_valid(&self) -> bool {
-        self.thread.is_some() && !self.address.is_empty()
+    pub fn connect(&mut self, url: &str) -> Pod {
+        let _ = url::Url::parse(url)?;
+        *self = connect(url);
+        Ok(())
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.sender.is_some()
     }
 
     /// Receive the events, timeout is decimal seconds
@@ -83,14 +90,14 @@ impl Client {
         M: Into<ws::Message>,
     {
         if let Some(sender) = &self.sender {
-            sender.send(msg)?;
+            Ok(sender.send(msg)?)
+        } else {
+            Err(anyhow::anyhow!("websocket not connected"))
         }
-
-        Err(anyhow::anyhow!("websocket not connected"))
     }
 
-    /// Shutdown the socket
-    pub fn shutdown(&self) {
+    /// Close the socket
+    pub fn close(&self) {
         if let Some(radio) = &self.radio {
             radio.shutdown().ok();
         }
