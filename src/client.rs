@@ -1,6 +1,5 @@
 use crate::{Pod, WebSocket};
 use poll_channel::*;
-use std::sync::mpsc::channel;
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -11,8 +10,11 @@ pub struct Client {
     radio: Option<Sender>,
     sender: Option<Sender>,
     ws: Option<WebSocket>,
+    tx: EventSender,
     rx: EventReceiver,
     run: std::sync::mpsc::Sender<bool>,
+    exit: Option<std::sync::mpsc::Receiver<bool>>,
+    mover: std::sync::mpsc::Sender<Sender>,
     connector: std::sync::mpsc::Receiver<Sender>,
     address: String,
 }
@@ -32,24 +34,58 @@ pub enum Event {
 impl Client {
     /// Create a empty client
     pub fn new() -> Self {
-        let (_tx, rx) = poll_channel::channel();
-        let (run, _exit) = std::sync::mpsc::channel();
-        let (_mover, connector) = std::sync::mpsc::channel();
+        let (tx, rx) = poll_channel::channel();
+        let (run, exit) = std::sync::mpsc::channel();
+        let (mover, connector) = std::sync::mpsc::channel();
         Self {
             thread: None,
             radio: None,
             sender: None,
             ws: None,
+            tx,
             rx,
             run,
+            exit: Some(exit),
+            mover,
             connector,
             address: String::new(),
         }
     }
 
     pub fn connect(&mut self, url: &str) -> Pod {
-        let _ = url::Url::parse(url)?;
-        *self = connect(url);
+        let to = url::Url::parse(url)?;
+        self.address = url.into();
+        let tx = self.tx.clone();
+        let mover = self.mover.clone();
+        let exit = self.exit.take().unwrap();
+
+        let thread = thread::spawn(move || {
+            loop {
+                let inner = tx.clone();
+                let mut socket = ws::Builder::new()
+                    .build(move |sender| WebSocketHandler {
+                        ws: sender,
+                        tx: inner.clone(),
+                    })
+                    .unwrap();
+
+                // send to parent thread
+                let radio = socket.broadcaster();
+                let _ = mover.send(radio);
+
+                // run
+                let _ = socket.connect(to.clone());
+                let _ = socket.run();
+
+                // sleep and detect exit
+                if let Ok(_) = exit.recv_timeout(Duration::from_secs(3)) {
+                    break;
+                }
+            }
+        });
+
+        self.thread = Some(thread);
+
         Ok(())
     }
 
@@ -152,57 +188,10 @@ impl Drop for Client {
 }
 
 /// Connect to WebSocket, such as `ws://1.2.3.4:5678/`
-pub fn connect(url: &str) -> Client {
-    let (tx, rx) = poll_channel::channel();
-    let (mover, connector) = channel();
-    let (notify, exit) = channel();
-    let address = url.to_string();
-
-    let thread = thread::spawn(move || {
-        loop {
-            let inner = tx.clone();
-            let mut socket = ws::Builder::new()
-                .build(move |sender| WebSocketHandler {
-                    ws: sender,
-                    tx: inner.clone(),
-                })
-                .unwrap();
-
-            // send to parent thread
-            let radio = socket.broadcaster();
-            let _ = mover.send(radio);
-
-            // run
-            let url = url::Url::parse(&address);
-            match url {
-                Ok(to) => {
-                    let _ = socket.connect(to);
-                    let _ = socket.run();
-                }
-                Err(error) => {
-                    let e = Error::new(ErrorKind::Internal, error.to_string());
-                    let _ = tx.send(Event::Error(e));
-                    break;
-                }
-            };
-
-            // sleep and detect exit
-            if let Ok(_) = exit.recv_timeout(Duration::from_secs(3)) {
-                break;
-            }
-        }
-    });
-
-    Client {
-        thread: Some(thread),
-        radio: None,
-        sender: None,
-        ws: None,
-        rx,
-        run: notify,
-        connector,
-        address: url.into(),
-    }
+pub fn connect(url: &str) -> anyhow::Result<Client> {
+    let mut client = Client::new();
+    client.connect(url)?;
+    Ok(client)
 }
 
 struct WebSocketHandler {
